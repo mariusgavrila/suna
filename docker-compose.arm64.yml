@@ -1,0 +1,120 @@
+services:
+  redis:
+    image: arm64v8/redis:7.2-alpine
+    platform: linux/arm64
+    container_name: redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    platform: linux/arm64
+    container_name: rabbitmq
+    hostname: rabbitmq
+    environment:
+      - RABBITMQ_ERLANG_COOKIE=sup3rs3cr3tc00k13f0rrabb1tmq
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+      - RABBITMQ_NODENAME=rabbit@rabbitmq
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-setcookie sup3rs3cr3tc00k13f0rrabb1tmq
+      - RABBITMQ_CTL_ERL_ARGS=-setcookie sup3rs3cr3tc00k13f0rrabb1tmq
+      - RABBITMQ_SERVER_START_ARGS=-setcookie sup3rs3cr3tc00k13f0rrabb1tmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - PLATFORM=linux/arm64
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV_MODE=${ENV_MODE:-local}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - MODEL_TO_USE=${MODEL_TO_USE:-gpt-4.1-nano}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY:-}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - PLATFORM=linux/arm64
+    platform: linux/arm64
+    environment:
+      - ENV_MODE=${ENV_MODE:-local}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+      - ./frontend/.env.local
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - PLATFORM=linux/arm64
+    platform: linux/arm64
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    env_file:
+      - ./frontend/.env.local
+    environment:
+      - NEXT_PUBLIC_ENV_MODE=${NEXT_PUBLIC_ENV_MODE:-local}
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://backend:8000/api}
+      - NEXT_PUBLIC_URL=${NEXT_PUBLIC_URL:-http://localhost:3000}
+
+volumes:
+  redis_data:
+  rabbitmq_data:

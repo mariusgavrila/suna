@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: ${APP_ID}-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ${APP_ID}-rabbitmq
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_ERLANG_COOKIE=${RABBITMQ_ERLANG_COOKIE:-sup3rs3cr3tc00k13f0rrabb1tmq}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}
+      - RABBITMQ_NODENAME=rabbit@${APP_ID}-rabbitmq
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-setcookie ${RABBITMQ_ERLANG_COOKIE:-sup3rs3cr3tc00k13f0rrabb1tmq}
+      - RABBITMQ_CTL_ERL_ARGS=-setcookie ${RABBITMQ_ERLANG_COOKIE:-sup3rs3cr3tc00k13f0rrabb1tmq}
+    ports:
+      - "5672"
+      - "15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - PLATFORM=${PLATFORM:-linux/amd64}
+    container_name: ${APP_ID}-backend
+    restart: unless-stopped
+    ports:
+      - "8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # Application
+      - ENV_MODE=production
+      - NODE_ENV=production
+      - PORT=8000
+      
+      # Database
+      - DATABASE_URL=${DATABASE_URL}
+      - DIRECT_DATABASE_URL=${DIRECT_DATABASE_URL}
+      
+      # Redis
+      - REDIS_HOST=${APP_ID}-redis
+      - REDIS_PORT=6379
+      
+      # RabbitMQ
+      - RABBITMQ_HOST=${APP_ID}-rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_DEFAULT_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_DEFAULT_PASS:-guest}
+      
+      # Supabase
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      
+      # Authentication
+      - NEXTAUTH_URL=https://suna.ttm.one
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      
+      # LLM Providers
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL}
+      
+      # Other API Keys
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      
+      # Analytics
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}
+      
+      # Optional Features
+      - MODEL_TO_USE=${MODEL_TO_USE:-gpt-4o}
+      - ENABLE_ANALYTICS=${ENABLE_ANALYTICS:-false}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - PLATFORM=${PLATFORM:-linux/amd64}
+    container_name: ${APP_ID}-frontend
+    restart: unless-stopped
+    ports:
+      - "3000"
+    depends_on:
+      - backend
+    environment:
+      # Next.js
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      
+      # Application
+      - NEXT_PUBLIC_ENV_MODE=production
+      - NEXT_PUBLIC_URL=https://suna.ttm.one
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://suna.ttm.one/api}
+      
+      # Supabase
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      
+      # Analytics
+      - NEXT_PUBLIC_LANGFUSE_HOST=${NEXT_PUBLIC_LANGFUSE_HOST}
+      - NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY=${NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY}
+      
+      # Features
+      - NEXT_PUBLIC_ENABLE_ANALYTICS=${NEXT_PUBLIC_ENABLE_ANALYTICS:-false}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  redis_data:
+  rabbitmq_data:
